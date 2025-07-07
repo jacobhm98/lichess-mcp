@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "lichess": {
+      "command": "java",
+      "args": ["-jar", "target/lichess-mcp-server-1.0.0.jar"],
+      "env": {
+        "LICHESS_API_TOKEN": "your_lichess_api_token_here"
+      }
+    }
+  }
+}
