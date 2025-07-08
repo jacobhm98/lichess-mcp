@@ -1,10 +1,19 @@
 {
   "mcpServers": {
-    "lichess": {
+    "lichess-local": {
       "command": "java",
-      "args": ["-jar", "target/lichess-mcp-server-1.0.0.jar"],
+      "args": ["-cp", "target/lichess-mcp-server-1.0.0.jar", "com.example.lichess.LichessMcpServer"],
       "env": {
         "LICHESS_API_TOKEN": "your_lichess_api_token_here"
+      }
+    },
+    "lichess-http": {
+      "transport": {
+        "type": "http",
+        "url": "http://localhost:8080/mcp",
+        "headers": {
+          "Authorization": "Bearer your_lichess_api_token_here"
+        }
       }
     }
   }

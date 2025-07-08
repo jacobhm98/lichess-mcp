@@ -44,28 +44,58 @@ A Model Context Protocol (MCP) server that provides integration with the Lichess
 
 ### Running the Server
 
-The server communicates via JSON-RPC over stdin/stdout:
+The server supports two transport methods:
 
+#### Console/stdin version (for local MCP clients)
 ```bash
-java -jar target/lichess-mcp-server-1.0.0.jar
+java -cp target/lichess-mcp-server-1.0.0.jar com.example.lichess.LichessMcpServer
 ```
+
+#### HTTP server version (for remote access)
+```bash
+java -cp target/lichess-mcp-server-1.0.0.jar com.example.lichess.LichessMcpHttpServer [port]
+```
+
+Default port is 8080. Example:
+```bash
+java -cp target/lichess-mcp-server-1.0.0.jar com.example.lichess.LichessMcpHttpServer 8080
+```
+
+The HTTP server provides these endpoints:
+- `POST /mcp` - MCP JSON-RPC requests (requires `Authorization: Bearer <lichess_token>` header)
+- `DELETE /mcp` - Session termination
+- `GET /health` - Health check
 
 ### MCP Client Configuration
 
-Add the following to your MCP client configuration:
-
+#### For stdin/stdout transport:
 ```json
 {
   "mcpServers": {
     "lichess": {
       "command": "java",
-      "args": ["-jar", "target/lichess-mcp-server-1.0.0.jar"],
+      "args": ["-cp", "target/lichess-mcp-server-1.0.0.jar", "com.example.lichess.LichessMcpServer"],
       "env": {
         "LICHESS_API_TOKEN": "your_lichess_api_token_here"
       }
     }
   }
 }
+```
+
+#### For HTTP transport:
+```bash
+# Test HTTP endpoint
+curl -X POST http://localhost:8080/mcp \
+  -H "Authorization: Bearer your_lichess_token" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"initialize","params":{},"id":1}'
+
+# Get user profile
+curl -X POST http://localhost:8080/mcp \
+  -H "Authorization: Bearer your_lichess_token" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_user_profile","arguments":{"username":"jacobhm98"}},"id":2}'
 ```
 
 ## Available Tools

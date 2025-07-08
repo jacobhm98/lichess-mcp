@@ -19,9 +19,26 @@ mvn clean package
 ```
 
 ### Run the server
+
+#### Console/stdin version (original)
 ```bash
-java -jar target/lichess-mcp-server-1.0.0.jar
+java -cp target/lichess-mcp-server-1.0.0.jar com.example.lichess.LichessMcpServer
 ```
+
+#### HTTP server version (remote)
+```bash
+java -cp target/lichess-mcp-server-1.0.0.jar com.example.lichess.LichessMcpHttpServer [port]
+```
+
+Default port is 8080. Example:
+```bash
+java -cp target/lichess-mcp-server-1.0.0.jar com.example.lichess.LichessMcpHttpServer 8080
+```
+
+The HTTP server provides these endpoints:
+- `POST /mcp` - MCP JSON-RPC requests (requires `Authorization: Bearer <lichess_token>` header)
+- `DELETE /mcp` - Session termination
+- `GET /health` - Health check
 
 ### Run tests
 ```bash
@@ -30,13 +47,15 @@ mvn test
 
 ## Architecture
 
-The project follows a simple two-class architecture:
+The project offers two server implementations sharing common components:
 
 ### Core Components
 
-- **LichessMcpServer** (`src/main/java/com/example/lichess/LichessMcpServer.java`): Main MCP server implementation that handles JSON-RPC communication over stdin/stdout. Implements the MCP protocol with initialize, tools/list, and tools/call methods.
+- **LichessMcpServer** (`src/main/java/com/example/lichess/LichessMcpServer.java`): Original MCP server implementation that handles JSON-RPC communication over stdin/stdout. Implements the MCP protocol with initialize, tools/list, and tools/call methods.
 
-- **LichessApiClient** (`src/main/java/com/example/lichess/LichessApiClient.java`): HTTP client wrapper for the Lichess API. Handles authentication, rate limiting, and API calls with proper error handling.
+- **LichessMcpHttpServer** (`src/main/java/com/example/lichess/LichessMcpHttpServer.java`): HTTP transport version that accepts remote MCP requests over HTTP. Uses Jetty embedded server and implements token delegation where clients pass Lichess API tokens via Authorization headers.
+
+- **LichessApiClient** (`src/main/java/com/example/lichess/LichessApiClient.java`): HTTP client wrapper for the Lichess API. Handles authentication, rate limiting, and API calls with proper error handling. Supports both environment variable tokens (stdin version) and per-request tokens (HTTP version).
 
 ### MCP Protocol Implementation
 
@@ -91,12 +110,22 @@ Beyond the exposed MCP tools, the client supports:
 
 ## Configuration
 
-The server requires a `LICHESS_API_TOKEN` environment variable for authenticated API access. The token should be set when running the server as shown in `example-config.json`.
+### Console/stdin Version
+The server requires a `LICHESS_API_TOKEN` environment variable for authenticated API access.
+
+### HTTP Version
+The server uses token delegation - clients must provide the Lichess API token via the `Authorization: Bearer <token>` header with each request. No server-side token configuration needed.
 
 **Bot Functionality Requirements:**
 - API token is mandatory for bot operations
 - Account must be upgraded to bot status on Lichess (irreversible)
 - Bot accounts can only play against other bots
+
+### HTTP Server Security
+- Validates Authorization header on every request
+- Returns HTTP 401 for missing/invalid tokens
+- Supports CORS for web client access
+- Binds to localhost by default for security
 
 ## Dependencies
 
