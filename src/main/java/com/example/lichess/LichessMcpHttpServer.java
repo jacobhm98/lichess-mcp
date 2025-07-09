@@ -21,11 +21,13 @@ public class LichessMcpHttpServer {
     private static final Logger logger = LoggerFactory.getLogger(LichessMcpHttpServer.class);
     private final ObjectMapper objectMapper;
     private final ChessEngine chessEngine;
+    private final EnhancedChessEngine enhancedEngine;
     private final int port;
 
     public LichessMcpHttpServer(int port) {
         this.objectMapper = new ObjectMapper();
         this.chessEngine = new ChessEngine();
+        this.enhancedEngine = new EnhancedChessEngine(chessEngine);
         this.port = port;
     }
 
@@ -232,6 +234,11 @@ public class LichessMcpHttpServer {
         addGetLegalMovesTool(tools);
         addWatchGameTool(tools);
         addPollForMyTurnTool(tools);
+        
+        // Engine analysis tools
+        addGetBestMoveTool(tools);
+        addAnalyzePositionTool(tools);
+        addGetTopMovesTool(tools);
 
         ObjectNode result = objectMapper.createObjectNode();
         result.set("tools", tools);
@@ -282,6 +289,15 @@ public class LichessMcpHttpServer {
                     break;
                 case "poll_for_my_turn":
                     handlePollForMyTurn(response, arguments, lichessClient);
+                    break;
+                case "get_best_move":
+                    handleGetBestMove(response, arguments, lichessClient);
+                    break;
+                case "analyze_position":
+                    handleAnalyzePosition(response, arguments, lichessClient);
+                    break;
+                case "get_top_moves":
+                    handleGetTopMoves(response, arguments, lichessClient);
                     break;
                 default:
                     handleError(response, -32602, "Unknown tool", null);
@@ -913,5 +929,194 @@ public class LichessMcpHttpServer {
         tool.set("inputSchema", schema);
         
         tools.add(tool);
+    }
+    
+    // Engine analysis tool handlers
+    private void handleGetBestMove(ObjectNode response, JsonNode arguments, LichessApiClient lichessClient) throws Exception {
+        String gameId = arguments.get("gameId").asText();
+        
+        // Get the current position FEN from game state
+        String gameState = lichessClient.getBotGameState(gameId);
+        String finalFen = extractFenFromGameState(gameState);
+        
+        EnhancedChessEngine.Move bestMove = enhancedEngine.findBestMove(finalFen);
+        
+        ObjectNode result = objectMapper.createObjectNode();
+        ArrayNode content = objectMapper.createArrayNode();
+
+        ObjectNode textContent = objectMapper.createObjectNode();
+        textContent.put("type", "text");
+        
+        if (bestMove != null) {
+            String evalStr = enhancedEngine.formatEvaluation(bestMove.evaluation);
+            textContent.put("text", String.format("Best Move for game %s:\n\n" +
+                "Move: %s\n" +
+                "Evaluation: %s (%d centipawns)\n" +
+                "Current Position: %s\n\n" +
+                "Engine recommends playing %s", 
+                gameId, bestMove.uci, evalStr, bestMove.evaluation, finalFen, bestMove.uci));
+        } else {
+            textContent.put("text", String.format("No best move found for game %s. The game may be over.", gameId));
+        }
+        
+        content.add(textContent);
+        result.set("content", content);
+        response.set("result", result);
+    }
+
+    private void handleAnalyzePosition(ObjectNode response, JsonNode arguments, LichessApiClient lichessClient) throws Exception {
+        String gameId = arguments.get("gameId").asText();
+        int depth = arguments.has("depth") ? arguments.get("depth").asInt() : 4;
+        
+        // Get the current position FEN from game state
+        String gameState = lichessClient.getBotGameState(gameId);
+        String finalFen = extractFenFromGameState(gameState);
+        
+        EnhancedChessEngine.EngineAnalysis analysis = enhancedEngine.analyzePosition(finalFen, depth);
+        
+        ObjectNode result = objectMapper.createObjectNode();
+        ArrayNode content = objectMapper.createArrayNode();
+
+        ObjectNode textContent = objectMapper.createObjectNode();
+        textContent.put("type", "text");
+        textContent.put("text", String.format("Chess Engine Analysis for game %s:\n\n%s", 
+            gameId, analysis.toFormattedString()));
+        content.add(textContent);
+
+        result.set("content", content);
+        response.set("result", result);
+    }
+
+    private void handleGetTopMoves(ObjectNode response, JsonNode arguments, LichessApiClient lichessClient) throws Exception {
+        String gameId = arguments.get("gameId").asText();
+        int count = arguments.has("count") ? arguments.get("count").asInt() : 5;
+        
+        // Get the current position FEN from game state
+        String gameState = lichessClient.getBotGameState(gameId);
+        String finalFen = extractFenFromGameState(gameState);
+        
+        List<EnhancedChessEngine.Move> topMoves = enhancedEngine.getTopMoves(finalFen, count);
+        
+        ObjectNode result = objectMapper.createObjectNode();
+        ArrayNode content = objectMapper.createArrayNode();
+
+        ObjectNode textContent = objectMapper.createObjectNode();
+        textContent.put("type", "text");
+        
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("Top %d Moves for game %s:\n\n", count, gameId));
+        sb.append(String.format("Position: %s\n\n", finalFen));
+        
+        for (int i = 0; i < topMoves.size(); i++) {
+            EnhancedChessEngine.Move move = topMoves.get(i);
+            String evalStr = enhancedEngine.formatEvaluation(move.evaluation);
+            sb.append(String.format("%d. %s - %s (%d centipawns)\n", 
+                i + 1, move.uci, evalStr, move.evaluation));
+        }
+        
+        textContent.put("text", sb.toString());
+        content.add(textContent);
+
+        result.set("content", content);
+        response.set("result", result);
+    }
+    
+    // Engine analysis tool schema methods
+    private void addGetBestMoveTool(ArrayNode tools) {
+        ObjectNode tool = objectMapper.createObjectNode();
+        tool.put("name", "get_best_move");
+        tool.put("description", "Get the chess engine's best move suggestion for a position");
+        
+        ObjectNode schema = objectMapper.createObjectNode();
+        schema.put("type", "object");
+        ObjectNode props = objectMapper.createObjectNode();
+        
+        ObjectNode gameIdParam = objectMapper.createObjectNode();
+        gameIdParam.put("type", "string");
+        gameIdParam.put("description", "The game ID to analyze");
+        props.set("gameId", gameIdParam);
+        
+        schema.set("properties", props);
+        ArrayNode required = objectMapper.createArrayNode();
+        required.add("gameId");
+        schema.set("required", required);
+        tool.set("inputSchema", schema);
+        
+        tools.add(tool);
+    }
+
+    private void addAnalyzePositionTool(ArrayNode tools) {
+        ObjectNode tool = objectMapper.createObjectNode();
+        tool.put("name", "analyze_position");
+        tool.put("description", "Get detailed chess engine analysis of a position including evaluation and top moves");
+        
+        ObjectNode schema = objectMapper.createObjectNode();
+        schema.put("type", "object");
+        ObjectNode props = objectMapper.createObjectNode();
+        
+        ObjectNode gameIdParam = objectMapper.createObjectNode();
+        gameIdParam.put("type", "string");
+        gameIdParam.put("description", "The game ID to analyze");
+        props.set("gameId", gameIdParam);
+        
+        ObjectNode depthParam = objectMapper.createObjectNode();
+        depthParam.put("type", "number");
+        depthParam.put("description", "Analysis depth (default 4)");
+        props.set("depth", depthParam);
+        
+        schema.set("properties", props);
+        ArrayNode required = objectMapper.createArrayNode();
+        required.add("gameId");
+        schema.set("required", required);
+        tool.set("inputSchema", schema);
+        
+        tools.add(tool);
+    }
+
+    private void addGetTopMovesTool(ArrayNode tools) {
+        ObjectNode tool = objectMapper.createObjectNode();
+        tool.put("name", "get_top_moves");
+        tool.put("description", "Get multiple top move candidates with evaluations from the chess engine");
+        
+        ObjectNode schema = objectMapper.createObjectNode();
+        schema.put("type", "object");
+        ObjectNode props = objectMapper.createObjectNode();
+        
+        ObjectNode gameIdParam = objectMapper.createObjectNode();
+        gameIdParam.put("type", "string");
+        gameIdParam.put("description", "The game ID to analyze");
+        props.set("gameId", gameIdParam);
+        
+        ObjectNode countParam = objectMapper.createObjectNode();
+        countParam.put("type", "number");
+        countParam.put("description", "Number of top moves to return (default 5)");
+        props.set("count", countParam);
+        
+        schema.set("properties", props);
+        ArrayNode required = objectMapper.createArrayNode();
+        required.add("gameId");
+        schema.set("required", required);
+        tool.set("inputSchema", schema);
+        
+        tools.add(tool);
+    }
+    
+    /**
+     * Extract FEN from game state JSON
+     */
+    private String extractFenFromGameState(String gameState) throws Exception {
+        JsonNode gameStateJson = objectMapper.readTree(gameState);
+        JsonNode nowPlaying = gameStateJson.get("nowPlaying");
+        
+        if (nowPlaying != null && nowPlaying.isArray() && nowPlaying.size() > 0) {
+            JsonNode game = nowPlaying.get(0);
+            JsonNode fen = game.get("fen");
+            if (fen != null) {
+                return fen.asText();
+            }
+        }
+        
+        // Fallback to starting position
+        return "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
     }
 }

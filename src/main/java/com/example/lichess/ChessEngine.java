@@ -108,8 +108,17 @@ public class ChessEngine {
         // Parse algebraic notation
         String cleanMove = move.replaceAll("[+#]", ""); // Remove check/checkmate indicators
         
-        // This is a simplified move parser - real implementation would need more logic
-        // For now, just toggle active color
+        // Simple move parsing for common moves
+        if (cleanMove.length() >= 2) {
+            // Try to parse basic moves like e4, Nf3, etc.
+            char piece = cleanMove.charAt(0);
+            String destination = cleanMove.substring(cleanMove.length() - 2);
+            
+            // Apply basic move logic
+            applyBasicMove(piece, destination);
+        }
+        
+        // Toggle active color
         activeColor = activeColor.equals("w") ? "b" : "w";
         
         if (activeColor.equals("w")) {
@@ -118,6 +127,35 @@ public class ChessEngine {
         
         // Update FEN
         updateFen();
+    }
+    
+    private void applyBasicMove(char piece, String destination) {
+        // Basic move application to update board array
+        int destSquare = algebraicToSquare(destination);
+        if (destSquare >= 0 && destSquare < 64) {
+            // Clear the destination square and place the piece
+            if (Character.isLowerCase(piece)) {
+                // Pawn move
+                board[destSquare] = activeColor.equals("w") ? "P" : "p";
+            } else {
+                // Piece move
+                board[destSquare] = activeColor.equals("w") ? String.valueOf(piece) : String.valueOf(Character.toLowerCase(piece));
+            }
+        }
+    }
+    
+    private int algebraicToSquare(String algebraic) {
+        if (algebraic.length() != 2) return -1;
+        
+        char file = algebraic.charAt(0);
+        char rank = algebraic.charAt(1);
+        
+        if (file < 'a' || file > 'h' || rank < '1' || rank > '8') return -1;
+        
+        int fileNum = file - 'a';
+        int rankNum = rank - '1';
+        
+        return (7 - rankNum) * 8 + fileNum;
     }
     
     private void applyCastling(boolean kingside) {
@@ -180,23 +218,216 @@ public class ChessEngine {
     }
     
     public List<String> getLegalMoves() {
-        // Simplified legal move generation
+        // Generate legal moves based on current position
         List<String> moves = new ArrayList<>();
         
-        // Basic moves based on current position
-        if (activeColor.equals("w")) {
-            moves.add("e2e4");
-            moves.add("d2d4");
-            moves.add("g1f3");
-            moves.add("b1c3");
-        } else {
-            moves.add("e7e5");
-            moves.add("d7d5");
-            moves.add("g8f6");
-            moves.add("b8c6");
+        // Generate moves for each piece on the board
+        for (int square = 0; square < 64; square++) {
+            String piece = board[square];
+            if (piece.isEmpty()) continue;
+            
+            boolean isPieceWhite = Character.isUpperCase(piece.charAt(0));
+            boolean isCurrentPlayerTurn = (activeColor.equals("w") && isPieceWhite) || 
+                                        (activeColor.equals("b") && !isPieceWhite);
+            
+            if (!isCurrentPlayerTurn) continue;
+            
+            // Generate moves for this piece
+            List<String> pieceMoves = generateMovesForPiece(square, piece.charAt(0));
+            moves.addAll(pieceMoves);
         }
         
         return moves;
+    }
+    
+    private List<String> generateMovesForPiece(int square, char piece) {
+        List<String> moves = new ArrayList<>();
+        String fromSquare = squareToAlgebraic(square);
+        
+        switch (Character.toLowerCase(piece)) {
+            case 'p':
+                moves.addAll(generatePawnMoves(square, Character.isUpperCase(piece)));
+                break;
+            case 'n':
+                moves.addAll(generateKnightMoves(square));
+                break;
+            case 'b':
+                moves.addAll(generateBishopMoves(square));
+                break;
+            case 'r':
+                moves.addAll(generateRookMoves(square));
+                break;
+            case 'q':
+                moves.addAll(generateQueenMoves(square));
+                break;
+            case 'k':
+                moves.addAll(generateKingMoves(square));
+                break;
+        }
+        
+        return moves;
+    }
+    
+    private List<String> generatePawnMoves(int square, boolean isWhite) {
+        List<String> moves = new ArrayList<>();
+        int rank = square / 8;
+        int file = square % 8;
+        
+        int direction = isWhite ? -1 : 1;
+        int startRank = isWhite ? 6 : 1;
+        
+        // Forward move
+        int newSquare = square + direction * 8;
+        if (newSquare >= 0 && newSquare < 64 && board[newSquare].isEmpty()) {
+            moves.add(squareToAlgebraic(square) + squareToAlgebraic(newSquare));
+            
+            // Double move from starting position
+            if (rank == startRank) {
+                newSquare = square + direction * 16;
+                if (newSquare >= 0 && newSquare < 64 && board[newSquare].isEmpty()) {
+                    moves.add(squareToAlgebraic(square) + squareToAlgebraic(newSquare));
+                }
+            }
+        }
+        
+        // Captures
+        for (int df = -1; df <= 1; df += 2) {
+            if (file + df >= 0 && file + df < 8) {
+                newSquare = square + direction * 8 + df;
+                if (newSquare >= 0 && newSquare < 64 && !board[newSquare].isEmpty()) {
+                    boolean targetIsWhite = Character.isUpperCase(board[newSquare].charAt(0));
+                    if (targetIsWhite != isWhite) {
+                        moves.add(squareToAlgebraic(square) + squareToAlgebraic(newSquare));
+                    }
+                }
+            }
+        }
+        
+        return moves;
+    }
+    
+    private List<String> generateKnightMoves(int square) {
+        List<String> moves = new ArrayList<>();
+        int rank = square / 8;
+        int file = square % 8;
+        
+        int[][] knightMoves = {{-2,-1}, {-2,1}, {-1,-2}, {-1,2}, {1,-2}, {1,2}, {2,-1}, {2,1}};
+        
+        for (int[] move : knightMoves) {
+            int newRank = rank + move[0];
+            int newFile = file + move[1];
+            
+            if (newRank >= 0 && newRank < 8 && newFile >= 0 && newFile < 8) {
+                int newSquare = newRank * 8 + newFile;
+                if (canMoveTo(square, newSquare)) {
+                    moves.add(squareToAlgebraic(square) + squareToAlgebraic(newSquare));
+                }
+            }
+        }
+        
+        return moves;
+    }
+    
+    private List<String> generateBishopMoves(int square) {
+        List<String> moves = new ArrayList<>();
+        int[][] directions = {{-1,-1}, {-1,1}, {1,-1}, {1,1}};
+        
+        for (int[] dir : directions) {
+            moves.addAll(generateSlidingMoves(square, dir[0], dir[1]));
+        }
+        
+        return moves;
+    }
+    
+    private List<String> generateRookMoves(int square) {
+        List<String> moves = new ArrayList<>();
+        int[][] directions = {{-1,0}, {1,0}, {0,-1}, {0,1}};
+        
+        for (int[] dir : directions) {
+            moves.addAll(generateSlidingMoves(square, dir[0], dir[1]));
+        }
+        
+        return moves;
+    }
+    
+    private List<String> generateQueenMoves(int square) {
+        List<String> moves = new ArrayList<>();
+        int[][] directions = {{-1,-1}, {-1,0}, {-1,1}, {0,-1}, {0,1}, {1,-1}, {1,0}, {1,1}};
+        
+        for (int[] dir : directions) {
+            moves.addAll(generateSlidingMoves(square, dir[0], dir[1]));
+        }
+        
+        return moves;
+    }
+    
+    private List<String> generateKingMoves(int square) {
+        List<String> moves = new ArrayList<>();
+        int rank = square / 8;
+        int file = square % 8;
+        
+        for (int dr = -1; dr <= 1; dr++) {
+            for (int df = -1; df <= 1; df++) {
+                if (dr == 0 && df == 0) continue;
+                
+                int newRank = rank + dr;
+                int newFile = file + df;
+                
+                if (newRank >= 0 && newRank < 8 && newFile >= 0 && newFile < 8) {
+                    int newSquare = newRank * 8 + newFile;
+                    if (canMoveTo(square, newSquare)) {
+                        moves.add(squareToAlgebraic(square) + squareToAlgebraic(newSquare));
+                    }
+                }
+            }
+        }
+        
+        return moves;
+    }
+    
+    private List<String> generateSlidingMoves(int square, int rankDir, int fileDir) {
+        List<String> moves = new ArrayList<>();
+        int rank = square / 8;
+        int file = square % 8;
+        
+        int newRank = rank + rankDir;
+        int newFile = file + fileDir;
+        
+        while (newRank >= 0 && newRank < 8 && newFile >= 0 && newFile < 8) {
+            int newSquare = newRank * 8 + newFile;
+            
+            if (board[newSquare].isEmpty()) {
+                moves.add(squareToAlgebraic(square) + squareToAlgebraic(newSquare));
+            } else {
+                // Can capture if it's opponent's piece
+                if (canMoveTo(square, newSquare)) {
+                    moves.add(squareToAlgebraic(square) + squareToAlgebraic(newSquare));
+                }
+                break; // Can't move further
+            }
+            
+            newRank += rankDir;
+            newFile += fileDir;
+        }
+        
+        return moves;
+    }
+    
+    private boolean canMoveTo(int fromSquare, int toSquare) {
+        if (board[toSquare].isEmpty()) {
+            return true;
+        }
+        
+        boolean fromIsWhite = Character.isUpperCase(board[fromSquare].charAt(0));
+        boolean toIsWhite = Character.isUpperCase(board[toSquare].charAt(0));
+        
+        return fromIsWhite != toIsWhite; // Can capture opponent's piece
+    }
+    
+    private String squareToAlgebraic(int square) {
+        int rank = square / 8;
+        int file = square % 8;
+        return String.valueOf((char)('a' + file)) + String.valueOf((char)('1' + (7 - rank)));
     }
     
     public String getActiveColor() {
