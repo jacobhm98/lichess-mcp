@@ -17,6 +17,7 @@ public class LichessMcpServer {
   private final ObjectMapper objectMapper;
   private final LichessApiClient lichessClient;
   private final ChessEngine chessEngine;
+  private final EnhancedChessEngine enhancedEngine;
   private final PrintWriter out;
   private final BufferedReader in;
 
@@ -24,6 +25,7 @@ public class LichessMcpServer {
     this.objectMapper = new ObjectMapper();
     this.lichessClient = new LichessApiClient();
     this.chessEngine = new ChessEngine();
+    this.enhancedEngine = new EnhancedChessEngine(chessEngine);
     this.out = new PrintWriter(System.out, true);
     this.in = new BufferedReader(new InputStreamReader(System.in));
   }
@@ -486,6 +488,97 @@ public class LichessMcpServer {
     pollTurnTool.set("inputSchema", pollInputSchema);
     
     tools.add(pollTurnTool);
+    
+    // Engine Analysis Tools
+    ObjectNode getBestMoveTool = objectMapper.createObjectNode();
+    getBestMoveTool.put("name", "get_best_move");
+    getBestMoveTool.put("description", "Get the chess engine's best move suggestion for a position");
+    
+    ObjectNode bestMoveSchema = objectMapper.createObjectNode();
+    bestMoveSchema.put("type", "object");
+    ObjectNode bestMoveProps = objectMapper.createObjectNode();
+    
+    ObjectNode gameIdBestParam = objectMapper.createObjectNode();
+    gameIdBestParam.put("type", "string");
+    gameIdBestParam.put("description", "The game ID to analyze");
+    bestMoveProps.set("gameId", gameIdBestParam);
+    
+    bestMoveSchema.set("properties", bestMoveProps);
+    ArrayNode bestMoveRequired = objectMapper.createArrayNode();
+    bestMoveRequired.add("gameId");
+    bestMoveSchema.set("required", bestMoveRequired);
+    
+    ObjectNode bestMoveInputSchema = objectMapper.createObjectNode();
+    bestMoveInputSchema.put("type", "object");
+    bestMoveInputSchema.set("properties", bestMoveProps);
+    bestMoveInputSchema.set("required", bestMoveRequired);
+    getBestMoveTool.set("inputSchema", bestMoveInputSchema);
+    
+    tools.add(getBestMoveTool);
+    
+    // Analyze Position Tool
+    ObjectNode analyzePositionTool = objectMapper.createObjectNode();
+    analyzePositionTool.put("name", "analyze_position");
+    analyzePositionTool.put("description", "Get detailed chess engine analysis of a position including evaluation and top moves");
+    
+    ObjectNode analyzePositionSchema = objectMapper.createObjectNode();
+    analyzePositionSchema.put("type", "object");
+    ObjectNode analyzePositionProps = objectMapper.createObjectNode();
+    
+    ObjectNode gameIdAnalyzePositionParam = objectMapper.createObjectNode();
+    gameIdAnalyzePositionParam.put("type", "string");
+    gameIdAnalyzePositionParam.put("description", "The game ID to analyze");
+    analyzePositionProps.set("gameId", gameIdAnalyzePositionParam);
+    
+    ObjectNode depthParam = objectMapper.createObjectNode();
+    depthParam.put("type", "number");
+    depthParam.put("description", "Analysis depth (default 4)");
+    analyzePositionProps.set("depth", depthParam);
+    
+    analyzePositionSchema.set("properties", analyzePositionProps);
+    ArrayNode analyzePositionRequired = objectMapper.createArrayNode();
+    analyzePositionRequired.add("gameId");
+    analyzePositionSchema.set("required", analyzePositionRequired);
+    
+    ObjectNode analyzePositionInputSchema = objectMapper.createObjectNode();
+    analyzePositionInputSchema.put("type", "object");
+    analyzePositionInputSchema.set("properties", analyzePositionProps);
+    analyzePositionInputSchema.set("required", analyzePositionRequired);
+    analyzePositionTool.set("inputSchema", analyzePositionInputSchema);
+    
+    tools.add(analyzePositionTool);
+    
+    // Get Top Moves Tool
+    ObjectNode getTopMovesTool = objectMapper.createObjectNode();
+    getTopMovesTool.put("name", "get_top_moves");
+    getTopMovesTool.put("description", "Get multiple top move candidates with evaluations from the chess engine");
+    
+    ObjectNode topMovesSchema = objectMapper.createObjectNode();
+    topMovesSchema.put("type", "object");
+    ObjectNode topMovesProps = objectMapper.createObjectNode();
+    
+    ObjectNode gameIdTopMovesParam = objectMapper.createObjectNode();
+    gameIdTopMovesParam.put("type", "string");
+    gameIdTopMovesParam.put("description", "The game ID to analyze");
+    topMovesProps.set("gameId", gameIdTopMovesParam);
+    
+    ObjectNode countParam = objectMapper.createObjectNode();
+    countParam.put("type", "number");
+    countParam.put("description", "Number of top moves to return (default 5)");
+    topMovesProps.set("count", countParam);
+    
+    topMovesSchema.set("properties", topMovesProps);
+    ArrayNode topMovesRequired = objectMapper.createArrayNode();
+    topMovesRequired.add("gameId");
+    topMovesSchema.set("required", topMovesRequired);
+    
+    ObjectNode topMovesInputSchema = objectMapper.createObjectNode();
+    topMovesInputSchema.put("type", "object");
+    topMovesInputSchema.set("properties", topMovesProps);
+    topMovesInputSchema.set("required", topMovesRequired);
+    getTopMovesTool.set("inputSchema", topMovesInputSchema);
+    
+    tools.add(getTopMovesTool);
 
     ObjectNode result = objectMapper.createObjectNode();
     result.set("tools", tools);
@@ -536,6 +629,15 @@ public class LichessMcpServer {
           break;
         case "poll_for_my_turn":
           handlePollForMyTurn(response, arguments);
+          break;
+        case "get_best_move":
+          handleGetBestMove(response, arguments);
+          break;
+        case "analyze_position":
+          handleAnalyzePosition(response, arguments);
+          break;
+        case "get_top_moves":
+          handleGetTopMoves(response, arguments);
           break;
         default:
           handleError(response, -32602, "Unknown tool", null);
@@ -738,9 +840,10 @@ public class LichessMcpServer {
   private void handleGetBoardPosition(ObjectNode response, JsonNode arguments) throws Exception {
     String gameId = arguments.get("gameId").asText();
     
-    // Get game PGN and analyze position
-    String pgn = lichessClient.getGamePgn(gameId);
-    String finalFen = chessEngine.applyMoves(pgn);
+    // Get the current position FEN from game state (same as handleGetBestMove)
+    String gameState = lichessClient.getBotGameState(gameId);
+    String finalFen = extractFenFromGameState(gameState);
+    chessEngine.setFen(finalFen);
     String boardDescription = chessEngine.getBoardDescription();
     String activeColor = chessEngine.getActiveColor();
     boolean isCheck = chessEngine.isKingInCheck();
@@ -768,9 +871,10 @@ public class LichessMcpServer {
   private void handleGetLegalMoves(ObjectNode response, JsonNode arguments) throws Exception {
     String gameId = arguments.get("gameId").asText();
     
-    // Get game PGN and analyze
-    String pgn = lichessClient.getGamePgn(gameId);
-    chessEngine.applyMoves(pgn);
+    // Get the current position FEN from game state (same as handleGetBestMove)
+    String gameState = lichessClient.getBotGameState(gameId);
+    String finalFen = extractFenFromGameState(gameState);
+    chessEngine.setFen(finalFen);
     
     List<String> legalMoves = chessEngine.getLegalMoves();
     String activeColor = chessEngine.getActiveColor();
@@ -832,6 +936,93 @@ public class LichessMcpServer {
     response.set("result", result);
   }
 
+  private void handleGetBestMove(ObjectNode response, JsonNode arguments) throws Exception {
+    String gameId = arguments.get("gameId").asText();
+    
+    // Get the current position FEN from game state
+    String gameState = lichessClient.getBotGameState(gameId);
+    String finalFen = extractFenFromGameState(gameState);
+    
+    EnhancedChessEngine.Move bestMove = enhancedEngine.findBestMove(finalFen);
+    
+    ObjectNode result = objectMapper.createObjectNode();
+    ArrayNode content = objectMapper.createArrayNode();
+
+    ObjectNode textContent = objectMapper.createObjectNode();
+    textContent.put("type", "text");
+    
+    if (bestMove != null) {
+      String evalStr = enhancedEngine.formatEvaluation(bestMove.evaluation);
+      textContent.put("text", String.format("Best Move for game %s:\n\n" +
+          "Move: %s\n" +
+          "Evaluation: %s (%d centipawns)\n" +
+          "Current Position: %s\n\n" +
+          "Engine recommends playing %s", 
+          gameId, bestMove.uci, evalStr, bestMove.evaluation, finalFen, bestMove.uci));
+    } else {
+      textContent.put("text", String.format("No best move found for game %s. The game may be over.", gameId));
+    }
+    
+    content.add(textContent);
+    result.set("content", content);
+    response.set("result", result);
+  }
+
+  private void handleAnalyzePosition(ObjectNode response, JsonNode arguments) throws Exception {
+    String gameId = arguments.get("gameId").asText();
+    int depth = arguments.has("depth") ? arguments.get("depth").asInt() : 4;
+    
+    String pgn = lichessClient.getGamePgn(gameId);
+    String finalFen = chessEngine.applyMoves(pgn);
+    
+    EnhancedChessEngine.EngineAnalysis analysis = enhancedEngine.analyzePosition(finalFen, depth);
+    
+    ObjectNode result = objectMapper.createObjectNode();
+    ArrayNode content = objectMapper.createArrayNode();
+
+    ObjectNode textContent = objectMapper.createObjectNode();
+    textContent.put("type", "text");
+    textContent.put("text", String.format("Chess Engine Analysis for game %s:\n\n%s", 
+        gameId, analysis.toFormattedString()));
+    content.add(textContent);
+
+    result.set("content", content);
+    response.set("result", result);
+  }
+
+  private void handleGetTopMoves(ObjectNode response, JsonNode arguments) throws Exception {
+    String gameId = arguments.get("gameId").asText();
+    int count = arguments.has("count") ? arguments.get("count").asInt() : 5;
+    
+    String pgn = lichessClient.getGamePgn(gameId);
+    String finalFen = chessEngine.applyMoves(pgn);
+    
+    List<EnhancedChessEngine.Move> topMoves = enhancedEngine.getTopMoves(finalFen, count);
+    
+    ObjectNode result = objectMapper.createObjectNode();
+    ArrayNode content = objectMapper.createArrayNode();
+
+    ObjectNode textContent = objectMapper.createObjectNode();
+    textContent.put("type", "text");
+    
+    StringBuilder sb = new StringBuilder();
+    sb.append(String.format("Top %d Moves for game %s:\n\n", count, gameId));
+    sb.append(String.format("Position: %s\n\n", finalFen));
+    
+    for (int i = 0; i < topMoves.size(); i++) {
+      EnhancedChessEngine.Move move = topMoves.get(i);
+      String evalStr = enhancedEngine.formatEvaluation(move.evaluation);
+      sb.append(String.format("%d. %s - %s (%d centipawns)\n", 
+          i + 1, move.uci, evalStr, move.evaluation));
+    }
+    
+    textContent.put("text", sb.toString());
+    content.add(textContent);
+
+    result.set("content", content);
+    response.set("result", result);
+  }
+
   private void handleError(ObjectNode response, int code, String message, String data) {
     ObjectNode error = objectMapper.createObjectNode();
     error.put("code", code);
@@ -860,6 +1051,25 @@ public class LichessMcpServer {
     } catch (Exception e) {
       logger.error("Error sending error response", e);
     }
+  }
+  
+  /**
+   * Extract FEN from game state JSON
+   */
+  private String extractFenFromGameState(String gameState) throws Exception {
+    JsonNode gameStateJson = objectMapper.readTree(gameState);
+    JsonNode nowPlaying = gameStateJson.get("nowPlaying");
+    
+    if (nowPlaying != null && nowPlaying.isArray() && nowPlaying.size() > 0) {
+      JsonNode game = nowPlaying.get(0);
+      JsonNode fen = game.get("fen");
+      if (fen != null) {
+        return fen.asText();
+      }
+    }
+    
+    // Fallback to starting position
+    return "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
   }
 }
 
